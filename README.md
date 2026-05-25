@@ -1,110 +1,73 @@
-# MainLine: Engenharia de Dados & Inteligência de Mercado para Outbound B2B
+# MainLine: Engenharia de Dados & Inteligência de Mercado B2B
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white)
 ![Pandas](https://img.shields.io/badge/Pandas-Data_Manipulation-150458?logo=pandas)
-![Status](https://img.shields.io/badge/Status-Fase_1_Conclu%C3%ADda-brightgreen)
+![Scikit-Learn](https://img.shields.io/badge/Scikit_Learn-Machine_Learning-F7931E?logo=scikit-learn)
+![Status](https://img.shields.io/badge/Status-Em_Produ%C3%A7%C3%A3o-brightgreen)
 
 ## Visão Geral do Projeto
 
-Este repositório documenta a arquitetura e os scripts de Engenharia de Dados (Data Engineering) do projeto **MainLine** — uma plataforma de aconselhamento financeiro focada em PMEs (Pequenas e Médias Empresas) americanas, especialmente nas verticais de **Transporte e Construção**.
+Este repositório documenta a arquitetura avançada de **Engenharia de Dados e Machine Learning** do projeto **MainLine** — uma plataforma de aconselhamento de capital focada em PMEs americanas (especialmente nas verticais de Transporte e Construção).
 
-O objetivo técnico principal deste repositório é construir uma pipeline ETL (Extract, Transform, Load) robusta para **reduzir o Custo por Negócio Financiado (CPFD) para menos de US$ 450**, substituindo o gasto massivo em anúncios cegos por uma estratégia cirúrgica de *Cold Emailing* orientada a dados.
+**O Desafio de Negócio:** Reduzir o Custo por Negócio Financiado (CPFD) para menos de US$ 450. Em vez de depender de testes A/B caros em Ads, a MainLine utiliza dados espaciais e demográficos para "caçar" frotas e construtoras de alta propensão a crédito antes mesmo de elas pesquisarem por empréstimos.
 
-A nossa infraestrutura cruza ativamente bases de dados de censos demográficos (bolsões industriais) com registos governamentais em tempo real para mapear leads altamente propensos a necessitar de linhas de crédito.
+## Arquitetura do Sistema (Dual Engine)
 
----
+O pipeline foi desenhado em dois "motores" que operam em paralelo e culminam num cruzamento de alto valor (*Left Join* Espacial).
 
-## O Desafio de Negócio (O "Porquê")
+### Motor 1: Inteligência Demográfica e Machine Learning (O Mapa)
+Responsável por consumir APIs do Censo dos EUA e modelar o mercado.
+1. **Ingestão (Extract):** Consumo das APIs do US Census Bureau (ACS para Renda/População e CBP para contagem de empresas por setor NAICS).
+2. **Transformação de Negócio:** Cálculo do **Score IPC** (Índice de Potencial de Crédito) cruzando densidade empresarial com renda domiciliária.
+3. **Machine Learning:** Algoritmo **K-Means** (via Scikit-Learn) que agrupa os CEPs (Zip Codes) em Clusters Estratégicos: Ouro (Alta Prioridade), Prata e Bronze.
+4. **Data Cleansing:** Scripts de salvaguarda que tratam CEPs órfãos, imputam condados em falta e garantem que nenhuma "mina de ouro" seja perdida por falha de formatação.
 
-Nos EUA, mais de 33 milhões de pequenos negócios (transportadoras, empreiteiros) são rejeitados sistematicamente pelos grandes bancos, caindo nas mãos de corretores de empréstimos predatórios (MCAs). A MainLine atua como um conselheiro honesto, gratuito para a PME. 
+### Motor 2: Pipeline de Ingestão de Leads Governamentais (Os Alvos)
+Responsável por puxar empresas reais que se enquadrem no ICP (Ideal Customer Profile).
+1. **Extração Cirúrgica (SoQL):** Download automatizado da API da FMCSA (Federal Motor Carrier Safety Administration). O processamento é feito *Server-Side*, baixando apenas empresas ativas, reais (Carriers), com 1 a 50 frotas e e-mail validado.
+2. **Higienização:** Limpeza de ruídos governamentais (aspas literais, tratamento do ZIP+4 para Zip Code padrão de 5 dígitos).
 
-O desafio é encontrar exatamente as frotas e empresas de construção que:
-1. São pequenas/médias (não possuem acesso a crédito *Enterprise*).
-2. Têm a documentação ativa.
-3. Estão sediadas em áreas demográficas de rápida expansão (o que gera alta procura por crédito).
-
-Este projeto é o "motor" que filtra milhões de registos inúteis e entrega ao marketing apenas a "mina de ouro".
-
----
-
-## Arquitetura da Pipeline (ETL)
-
-A fase inicial (atual) deste repositório foca-se na **Vertical de Transporte (Dispatched.finance)**. 
-
-### 1. Ingestão e Filtragem em Origem (Extract)
-Consumimos os dados da **API da FMCSA (Federal Motor Carrier Safety Administration)** americana utilizando a biblioteca `requests` e a Socrata Query Language (SoQL).
-* Em vez de baixar um *dump* de 3GB, otimizamos o processamento executando o filtro (ICP) diretamente nos servidores do governo:
-  * Apenas com **Status Ativo** (`A`).
-  * Apenas **Transportadoras Reais** (`CARRIER` = `C`), excluindo corretores.
-  * Métrica rigorosa de frota: **Entre 1 e 50 camiões/cavalos mecânicos** (`POWER_UNITS`).
-  * Descarte obrigatório de empresas **sem e-mail** registado.
-
-### 2. Higienização Técnica (Transform - Passo 1)
-O ficheiro CSV filtrado é processado em memória utilizando o `pandas`.
-* Limpeza de aspas literais dos cabeçalhos vindos da API.
-* **Harmonização de Chave (O Zip Code):** Remoção de rotas postais estendidas (ZIP+4, ex: `90210-1234`), isolando estritamente os 5 primeiros dígitos e aplicando preenchimento com zeros à esquerda (`.zfill(5)`) para garantir que as chaves coincidam perfeitamente nas fases seguintes.
-
-### 3. O Cruzamento de Inteligência Geográfica (Transform - Passo 2 / LEFT JOIN)
-A verdadeira vantagem competitiva do projeto acontece aqui. O script cruza os leads limpos da FMCSA com o nosso **Master Lookup de Demografia de Transporte**.
-* **Base Demográfica:** Uma tabela de inteligência que agrupa Zip Codes americanos em *Clusters de Prioridade* (Ouro, Prata e Bronze) com base em métricas censitárias e dados macroeconómicos.
-* **Operação:** Realizamos um *Left Join*. 
-  * Se o Zip Code da empresa coincidir com um Polo/Bolsão Ouro/Prata/Bronze, ela herda esse rótulo estratégico.
-  * Se a empresa estiver fora das áreas mapeadas ativas, ela não é descartada, sendo inteligentemente categorizada como **"Desconhecida"** (gerando um lead de descoberta para campanhas de baixo custo).
-
-### 4. Estruturação do Entregável (Load)
-O output final do processo é o ficheiro `fmcsa_leads_clusters.csv`. Um arquivo levíssimo contendo o Identificador do Governo (DOT), contactos completos e validados, tamanho exato da frota e a sua **Prioridade de Cluster**, pronto a ser injetado em ferramentas de *Cold Email Outreach*.
+### A Fusão (Enriquecimento de Outbound)
+O ficheiro da FMCSA é cruzado (`Left Join`) com os Clusters Demográficos gerados pelo Machine Learning. O entregável final é uma lista limpa de PMEs de transporte enriquecida com a tag (Ouro/Prata/Bronze) pronta para injeção em ferramentas automáticas de *Cold Emailing*.
 
 ---
 
-## Tecnologias e Ferramentas
+## Estrutura de Arquivos e Módulos
 
-* **Python 3.10+**: Linguagem base da orquestração.
-* **Pandas**: Para limpeza, *joins* relacionais e manipulação em lote dos CSVs.
-* **Requests / Socrata API**: Para consumo eficiente, paginação e *streaming* de dados governamentais massivos.
-* **NumPy**: Para manipulação algébrica das chaves.
-* **SO (Built-in)**: Para gestão estrutural do sistema de ficheiros (`dados/`, `dados_FMCSA/`).
+### 1. Orquestração e Setup
+* `run_all.py`: O "Maestro". Um script subprocess que roda toda a esteira de produção (Fase 1 à Fase 4) em sequência e com travas de segurança.
+* `extracao_empresas_cbp.py`: Arquivo de configuração (Single Source of Truth) contendo os códigos NAICS dos setores alvo.
 
----
+### 2. Motor Demográfico (Censo & ML)
+* `ingestao_censo.py`: Validador de chaves de API e variáveis de ambiente.
+* `extracao_censo_zipcode.py`: Pipeline de extração de dados populacionais e de renda (ACS).
+* `extracao_empresas_zbp.py`: Pipeline de extração de densidade de empresas (CBP).
+* `calculo_ipc_zipcode.py`: O coração matemático do projeto. Une as bases e gera o Score IPC.
+* `modelagem_clusters.py` & `clusterizacao_zipcode.py`: Pipeline de Machine Learning (K-Means) para ranqueamento e tagueamento geográfico.
+* `priorizar_e_mapear_polos.py`: Lógica de decis para separar "Polos Industriais" puros de "Bolsões Residenciais".
+* `limpeza_e_sincronizacao.py` & `erros.py`: Auditoria e salvaguarda da base de dados (Data Quality).
 
-## Estrutura de Ficheiros
-
-```text
-/MainLine_Project
-│
-├── dados/                                   # Bases de dados estratégicas da empresa
-│   ├── clusters_bolsoes_transporte.csv      # Base com Score IPC e Clusters Demográficos
-│   └── polos_transporte_zipcode.csv         # Polos industriais mapeados
-│
-├── dados_FMCSA/                             # Zona de tratamento (Landing Zone e Curated)
-│   ├── fmcsa_leads_limpos.csv               # Output cru da API Governamental
-│   └── fmcsa_leads_clusters.csv             # Ouro: Output Final (O Lead Enriquecido)
-│
-├── 01_import_fmcsa_api.py                   # Script de consumo automatizado via SODA API
-├── 02_limpeza_zip_codes.py                  # Script de Data Cleansing (Hifen e Aspas)
-├── 03_left_join_clusters.py                 # O Motor de Inteligência Geográfica
-│
-├── MainLine_Contexto_Negocio.md             # Regras de Negócio e Tom de Marca
-└── README.md                                # Esta documentação
-```
+### 3. Motor de Ingestão de Leads (Outbound FMCSA)
+* `import_FMCSA_db.py`: Ingestão *Streamada* via SODA API (Socrata) aplicando filtros pesados de negócio.
+* `limpeza_higienizacao_FMCSA.py`: Tratamento de strings e padronização da chave primária (Zip Code).
 
 ---
 
-## Como Executar o Pipeline Localmente
+## Como Executar a Esteira de Produção
 
-1. Clone o repositório.
-2. Crie as pastas `/dados` e `/dados_FMCSA` se elas não existirem no root.
-3. Garanta que tem as bases de dados demográficos originais dentro da pasta `/dados`.
-4. Instale as dependências: `pip install pandas requests numpy`.
-5. Execute o pipeline em sequência lógica:
+1. Clone o repositório e crie seu arquivo `.env` com `CENSUS_API_KEY` e `BLS_API_KEY`.
+2. Instale as dependências:
    ```bash
-   # Baixa os leads do governo
-   python 01_import_fmcsa_api.py
-   
-   # Formata e higieniza os dados (Opcional se integrados no mesmo script)
-   python 02_limpeza_zip_codes.py
-   
-   # Faz o Left Join e gera o ficheiro com o Ouro/Prata/Bronze
-   python 03_left_join_clusters.py
+   pip install pandas requests numpy scikit-learn python-dotenv
+   ```
+3. Rode o pipeline integrado do Motor Demográfico:
+   ```bash
+   python run_all.py
+   ```
+4. Baixe e higienize os leads ativos do governo:
+   ```bash
+   python import_FMCSA_db.py
+   python limpeza_higienizacao_FMCSA.py
    ```
 
 ---
